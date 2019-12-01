@@ -108,7 +108,7 @@ static void launchQEMU (GtkWidget *widget, gpointer userData){
     
     command += "-L ./qemu ";
     command += "--bios ./bios/efi/OVMF.fd ";
-    command += "-cdrom archlinux-2019.11.01-x86_64.iso ";
+    command += "-cdrom cdrom.iso ";
     command += "-vga virtio ";
     command += "-m 2048 ";
     command += "-cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time ";
@@ -126,23 +126,120 @@ static void launchQEMU (GtkWidget *widget, gpointer userData){
     std::system(command.c_str());
 }
 
-static void activate (GtkApplication* app,gpointer userData) {
-    GtkWidget *window;
-    GtkWidget *button;
-    GtkWidget *buttonBox;
-
-    window = gtk_application_window_new (app);
-    gtk_window_set_title (GTK_WINDOW (window), "qemu-config");
-    gtk_window_set_default_size (GTK_WINDOW (window), 200, 200);
-    gtk_widget_show_all (window);
+static void killQEMU (GtkWidget *widget, gpointer userData){
     
-    buttonBox = gtk_button_box_new (GTK_ORIENTATION_HORIZONTAL);
-    gtk_container_add (GTK_CONTAINER (window), buttonBox);
+    std::string command = "kill $(cat " + vmPidFile + ")";
+    
+    std::cout << "\nExecuting: \n" << command << "\n\n";
+    
+    std::system(command.c_str());
+}
 
-    button = gtk_button_new_with_label ("Boot VM");
-    g_signal_connect (button, "clicked", G_CALLBACK (launchQEMU), NULL);
+// GTK_ICON_SIZE_MENU
+// 	
+// 
+// Size appropriate for menus (16px).
+// 	 
+// 
+// GTK_ICON_SIZE_SMALL_TOOLBAR
+// 	
+// 
+// Size appropriate for small toolbars (16px).
+// 	 
+// 
+// GTK_ICON_SIZE_LARGE_TOOLBAR
+// 	
+// 
+// Size appropriate for large toolbars (24px)
+// 	 
+// 
+// GTK_ICON_SIZE_BUTTON
+// 	
+// 
+// Size appropriate for buttons (16px)
+// 	 
+// 
+// GTK_ICON_SIZE_DND
+// 	
+// 
+// Size appropriate for drag and drop (32px)
+// 	 
+// 
+// GTK_ICON_SIZE_DIALOG
+// 	
+// 
+// Size appropriate for dialogs (48px)
+
+
+static void activate (GtkApplication* app,gpointer userData) {
+    
+    GtkWidget *window = gtk_application_window_new (app);
+    gtk_window_set_title (GTK_WINDOW (window), "qemu-config");
+    gtk_window_set_default_size (GTK_WINDOW (window), 600, 400);
+    gtk_widget_show_all (window);
+
+    GtkWidget *mainPane = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_container_add(GTK_CONTAINER(window), mainPane);
+    //gtk_grid_attach(GTK_GRID(mainGrid), buttonBox, 1, 0, 1, 1);
+    GtkWidget *leftBox = gtk_box_new (GTK_ORIENTATION_VERTICAL,8);
+    GtkWidget *rightBox = gtk_box_new (GTK_ORIENTATION_VERTICAL,8);
+    
+    
+    
+    GtkWidget *vmListManagerBar = gtk_action_bar_new();
+    gtk_box_pack_start(GTK_BOX(leftBox),vmListManagerBar,false,true,0);
+    GtkWidget *buttonNewVM = gtk_button_new_from_icon_name("document-new", GTK_ICON_SIZE_BUTTON);
+    //g_signal_connect (buttonBootVM, "clicked", G_CALLBACK(launchQEMU), NULL);
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(vmListManagerBar),buttonNewVM);
+    
+    //GtkWidget *buttonDeleteVM = gtk_button_new_with_label("Delete");
+    GtkWidget *buttonDeleteVM = gtk_button_new_from_icon_name("edit-delete", GTK_ICON_SIZE_BUTTON);
+    //g_signal_connect (buttonBootVM, "clicked", G_CALLBACK(launchQEMU), NULL);
+    gtk_action_bar_pack_start(GTK_ACTION_BAR(vmListManagerBar),buttonDeleteVM);
+    
+    GtkWidget *scrolledVmList = gtk_scrolled_window_new (NULL, NULL);
+    GtkWidget *vmListContainer = gtk_box_new (GTK_ORIENTATION_VERTICAL,8);
+    gtk_container_add (GTK_CONTAINER (scrolledVmList), vmListContainer);
+    gtk_box_pack_start(GTK_BOX(leftBox),scrolledVmList,true,true,0);
+    
+    
+    GtkWidget *buttonSelectVM = gtk_button_new_with_label("VM-Name");
+    g_signal_connect (buttonSelectVM, "clicked", G_CALLBACK(killQEMU), NULL);
+    gtk_box_pack_start(GTK_BOX(vmListContainer),buttonSelectVM,false,true,0);
+    
+    
+    gtk_paned_add1(GTK_PANED(mainPane), leftBox);
+    
+    
+    
+    GtkWidget *vmActionBar = gtk_action_bar_new();
+    
+    GtkWidget *buttonBootVM = gtk_button_new_with_mnemonic("_Boot");
+    g_signal_connect (buttonBootVM, "clicked", G_CALLBACK(launchQEMU), NULL);
+    gtk_action_bar_pack_end(GTK_ACTION_BAR(vmActionBar),buttonBootVM);
+    
+    GtkWidget *buttonKillVM = gtk_button_new_with_mnemonic("_Kill");
+    g_signal_connect (buttonKillVM, "clicked", G_CALLBACK(killQEMU), NULL);
+    gtk_action_bar_pack_end(GTK_ACTION_BAR(vmActionBar),buttonKillVM);
+    
+    GtkWidget *scrolledSettings = gtk_scrolled_window_new (NULL, NULL);
+    GtkWidget *settingsContainer = gtk_grid_new();
+    gtk_container_add (GTK_CONTAINER(scrolledSettings), settingsContainer);
+    gtk_box_pack_start(GTK_BOX(rightBox),scrolledSettings,true,true,0);
+    
+    GtkWidget *settingsLabel1 = gtk_label_new("VM Name");
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabel1, 1, 1, 1, 1);
+    GtkWidget *settingsInput1 = gtk_entry_new();
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsInput1, 2, 1, 1, 1);
+    
+    GtkWidget *settingsLabel2 = gtk_label_new("CPU Cores");
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabel2, 1, 2, 1, 1);
+    
+    gtk_box_pack_end(GTK_BOX(rightBox),vmActionBar,false,true,0);
+    gtk_paned_add2(GTK_PANED(mainPane), rightBox);
+    
     //g_signal_connect_swapped (button, "clicked", G_CALLBACK (gtk_widget_destroy), window);
-    gtk_container_add (GTK_CONTAINER (buttonBox), button);
+    
 
     gtk_widget_show_all (window);
 }
