@@ -24,6 +24,8 @@ https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt/
 #include "json.hpp"
 #include <stdlib.h>
 #include <cstring>
+#include <fstream>
+#include <streambuf>
 
 #include <stdio.h>
 #include <unistd.h>
@@ -40,6 +42,66 @@ std::string qemuConfigFolder = std::string(getenv("HOME")) + "/.qemu-config";
 std::string vmList = "";
 std::string vmLogFile = "";
 std::string vmPidFile = "";
+json vmOptions;
+
+class Drive {
+public:
+    std::string virtualType;
+    std::string realType;
+    std::string file;
+    
+    Drive(json options) {
+        std::cout << "New Drive" << "\n";
+        std::cout << "    Real Type:          " << options["realType"].get<std::string>() << "\n";
+        std::cout << "    Emulated Type:      " << options["virtualType"].get<std::string>() << "\n";
+        std::cout << "    File:               " << options["file"].get<std::string>() << "\n";
+        virtualType = options["virtualType"].get<std::string>();
+        realType = options["realType"].get<std::string>();
+        file = options["file"].get<std::string>();
+    }
+};
+
+class VMObj {
+public:
+    std::string name;
+    bool efi;
+    int memory;
+    int cores;
+    std::string graphics;
+    std::string sound;
+    std::string network;
+    std::vector<Drive> drives;
+    
+    VMObj(json options) {
+        std::cout << "New VM" << "\n";
+        std::cout << "Name:               " << options["name"].get<std::string>() << "\n";
+        std::cout << "EFI?:               " << options["efi"].get<bool>() << "\n";
+        std::cout << "Memory:             " << options["memory"].get<int>() << "\n";
+        std::cout << "Cores:              " << options["cores"].get<int>() << "\n";
+        std::cout << "Graphics Card:      " << options["graphics"]["driver"].get<std::string>() << "\n";
+        std::cout << "Sound Card:         " << options["sound"].get<std::string>() << "\n";
+        std::cout << "Network Card:       " << options["network"].get<std::string>() << "\n";
+        std::cout << "[ Drives ]             " << "\n";
+        
+        for (auto& element : options["drives"]) {
+            Drive drive(element);
+            drives.push_back(drive);
+        }
+        
+        name = options["name"].get<std::string>();
+        efi = options["efi"].get<bool>();
+        memory = options["memory"].get<int>();
+        cores = options["cores"].get<int>();
+        graphics = options["graphics"]["driver"].get<std::string>();
+        sound = options["sound"].get<std::string>();
+        network = options["network"].get<std::string>();
+        
+        std::cout << "" << "\n";
+    }
+};
+
+std::vector<VMObj> vms;
+VMObj *selectedVM;
 
 bool isDirExist(const std::string& path)
 {
@@ -102,38 +164,8 @@ bool makePath(const std::string& path)
     }
 }
 
-static void launchQEMU (GtkWidget *widget, gpointer userData){
-    
-    std::string command = "qemu/qemu-system-x86_64 ";
-    
-    command += "-L ./qemu ";
-    command += "--bios ./bios/efi/OVMF.fd ";
-    command += "-cdrom cdrom.iso ";
-    command += "-vga virtio ";
-    command += "-m 2048 ";
-    command += "-cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time ";
-    command += "-enable-kvm ";
-    command += "-smp cores=2 ";
-    command += "-drive file=virtHDD.img,format=raw,index=0,media=disk,cache.direct=on ";
-    command += "-soundhw ac97 ";
-    command += "-netdev user,id=n0 -device rtl8139,netdev=n0 ";
-    command += "-pidfile " + vmPidFile + " ";
-    command += "-D " + vmLogFile;
-    command += " &>> " + vmLogFile;
-    
-    std::cout << "\nExecuting: \n" << command << "\n\n";
-    
-    std::system(command.c_str());
-}
 
-static void killQEMU (GtkWidget *widget, gpointer userData){
-    
-    std::string command = "kill $(cat " + vmPidFile + ")";
-    
-    std::cout << "\nExecuting: \n" << command << "\n\n";
-    
-    std::system(command.c_str());
-}
+
 
 // GTK_ICON_SIZE_MENU
 // 	
@@ -170,6 +202,73 @@ static void killQEMU (GtkWidget *widget, gpointer userData){
 // 
 // Size appropriate for dialogs (48px)
 
+GtkWidget *settingsInputName;
+GtkWidget *settingsInputMemory;
+GtkWidget *settingsInputCores;
+GtkWidget *settingsInputEFI;
+GtkWidget *settingsInputGraphicsDriver;
+GtkWidget *settingsInputNetworkCard;
+GtkWidget *settingsInputSoundCard;
+
+static void launchQEMU (GtkWidget *widget, gpointer userData){
+    std::cout << "Launching vm " << selectedVM->name << "\n";
+    
+    std::string command = "nohup qemu/qemu-system-x86_64 ";
+    command += "-L ./qemu ";
+    
+    if (selectedVM->efi) {
+        command += "--bios ./bios/efi/OVMF.fd ";
+    } else {
+        command += "--bios ./bios/bios-256k.bin ";
+    }
+    //command += "-cdrom Win7_Pro_SP1_English_x64.iso ";
+    command += "-vga " + selectedVM->graphics + " ";
+    command += "-m " + std::to_string(selectedVM->memory) + " ";
+    
+    //command += "-cpu qemu64,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time ";
+    
+    command += "-cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time ";
+    command += "-enable-kvm ";
+    
+    command += "-smp cores=" + std::to_string(selectedVM->cores) + " ";
+    int driveidx = 0;
+    for (Drive& drive : selectedVM->drives) {
+        std::cout << "Adding drive " << drive.file << "\n";
+        command += "-drive file=" + drive.file + ",format=" + drive.realType + ",media=" + drive.virtualType + ",cache.direct=on,bus=" + std::to_string(driveidx) + ",unit=0 ";
+        driveidx++;
+    }
+    command += "-soundhw " + selectedVM->sound + " ";
+    command += "-netdev user,id=n0 -device " + selectedVM->network + ",netdev=n0 ";
+    command += "-pidfile " + vmPidFile + " ";
+    command += "-D " + vmLogFile;
+    command += " & >> " + vmLogFile + "";
+
+    std::cout << "\nExecuting: \n" << command << "\n\n";
+    
+    std::system(command.c_str());
+}
+
+static void killQEMU (GtkWidget *widget, gpointer userData){
+    
+    std::string command = "kill $(cat " + vmPidFile + ")";
+    
+    std::cout << "\nExecuting: \n" << command << "\n\n";
+    
+    std::system(command.c_str());
+}
+
+static void selectVM (GtkWidget *widget, VMObj *obj){
+    std::cout << "Selecting vm ";
+    //VMObj *obj = userData;
+    selectedVM = obj;
+    std::cout << selectedVM->name << "\n";
+    gtk_entry_set_text(GTK_ENTRY(settingsInputName),selectedVM->name.c_str());
+    gtk_entry_set_text(GTK_ENTRY(settingsInputCores),std::to_string(selectedVM->cores).c_str());
+    gtk_entry_set_text(GTK_ENTRY(settingsInputMemory),std::to_string(selectedVM->memory).c_str());
+    gtk_entry_set_text(GTK_ENTRY(settingsInputGraphicsDriver),selectedVM->graphics.c_str());
+    gtk_entry_set_text(GTK_ENTRY(settingsInputSoundCard),selectedVM->sound.c_str());
+    gtk_entry_set_text(GTK_ENTRY(settingsInputNetworkCard),selectedVM->network.c_str());
+}
 
 static void activate (GtkApplication* app,gpointer userData) {
     
@@ -181,14 +280,14 @@ static void activate (GtkApplication* app,gpointer userData) {
     GtkWidget *mainPane = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
     gtk_container_add(GTK_CONTAINER(window), mainPane);
     //gtk_grid_attach(GTK_GRID(mainGrid), buttonBox, 1, 0, 1, 1);
-    GtkWidget *leftBox = gtk_box_new (GTK_ORIENTATION_VERTICAL,8);
-    GtkWidget *rightBox = gtk_box_new (GTK_ORIENTATION_VERTICAL,8);
+    GtkWidget *leftBox = gtk_box_new (GTK_ORIENTATION_VERTICAL,0);
+    GtkWidget *rightBox = gtk_box_new (GTK_ORIENTATION_VERTICAL,0);
     
     
     
     GtkWidget *vmListManagerBar = gtk_action_bar_new();
     gtk_box_pack_start(GTK_BOX(leftBox),vmListManagerBar,false,true,0);
-    GtkWidget *buttonNewVM = gtk_button_new_from_icon_name("document-new", GTK_ICON_SIZE_BUTTON);
+    GtkWidget *buttonNewVM = gtk_button_new_from_icon_name("add", GTK_ICON_SIZE_BUTTON);
     //g_signal_connect (buttonBootVM, "clicked", G_CALLBACK(launchQEMU), NULL);
     gtk_action_bar_pack_start(GTK_ACTION_BAR(vmListManagerBar),buttonNewVM);
     
@@ -198,15 +297,22 @@ static void activate (GtkApplication* app,gpointer userData) {
     gtk_action_bar_pack_start(GTK_ACTION_BAR(vmListManagerBar),buttonDeleteVM);
     
     GtkWidget *scrolledVmList = gtk_scrolled_window_new (NULL, NULL);
-    GtkWidget *vmListContainer = gtk_box_new (GTK_ORIENTATION_VERTICAL,8);
-    gtk_container_add (GTK_CONTAINER (scrolledVmList), vmListContainer);
-    gtk_box_pack_start(GTK_BOX(leftBox),scrolledVmList,true,true,0);
+    gtk_scrolled_window_set_policy (reinterpret_cast<GtkScrolledWindow*>(scrolledVmList),
+                                    GTK_POLICY_NEVER,
+                                    GTK_POLICY_ALWAYS);
     
+    gtk_box_pack_start(GTK_BOX(leftBox),scrolledVmList,true,true,0); // add scrolledVm lisr to leftBox
     
-    GtkWidget *buttonSelectVM = gtk_button_new_with_label("VM-Name");
-    g_signal_connect (buttonSelectVM, "clicked", G_CALLBACK(killQEMU), NULL);
-    gtk_box_pack_start(GTK_BOX(vmListContainer),buttonSelectVM,false,true,0);
+    GtkWidget *vmListContainer = gtk_box_new(GTK_ORIENTATION_VERTICAL,8);
+    gtk_container_add(GTK_CONTAINER (scrolledVmList), vmListContainer);
     
+    for(VMObj& element: vms) {
+        GtkWidget *buttonSelectVM = gtk_button_new_with_label(element.name.c_str());
+        g_signal_connect (buttonSelectVM, "clicked", G_CALLBACK(selectVM), &element);
+        gtk_box_pack_start(GTK_BOX(vmListContainer),buttonSelectVM,false,true,0);
+        //std::cout << "Vm ptr ";
+        //std::cout << &element << "\n";
+    }
     
     gtk_paned_add1(GTK_PANED(mainPane), leftBox);
     
@@ -223,17 +329,57 @@ static void activate (GtkApplication* app,gpointer userData) {
     gtk_action_bar_pack_end(GTK_ACTION_BAR(vmActionBar),buttonKillVM);
     
     GtkWidget *scrolledSettings = gtk_scrolled_window_new (NULL, NULL);
+    gtk_scrolled_window_set_policy (reinterpret_cast<GtkScrolledWindow*>(scrolledSettings),
+                                    GTK_POLICY_NEVER,
+                                    GTK_POLICY_ALWAYS);
     GtkWidget *settingsContainer = gtk_grid_new();
-    gtk_container_add (GTK_CONTAINER(scrolledSettings), settingsContainer);
+    gtk_grid_set_row_spacing(GTK_GRID(settingsContainer),8);
+    gtk_grid_set_column_spacing(GTK_GRID(settingsContainer),8);
+    gtk_container_add(GTK_CONTAINER(scrolledSettings), settingsContainer);
     gtk_box_pack_start(GTK_BOX(rightBox),scrolledSettings,true,true,0);
     
-    GtkWidget *settingsLabel1 = gtk_label_new("VM Name");
-    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabel1, 1, 1, 1, 1);
-    GtkWidget *settingsInput1 = gtk_entry_new();
-    gtk_grid_attach(GTK_GRID(settingsContainer), settingsInput1, 2, 1, 1, 1);
+    GtkWidget *settingsLabelName = gtk_label_new("VM Name");
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabelName, 1, 1, 1, 1);
+    settingsInputName = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(settingsInputName),"null");
+    gtk_widget_set_hexpand(settingsInputName, true);
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsInputName, 2, 1, 1, 1);
     
-    GtkWidget *settingsLabel2 = gtk_label_new("CPU Cores");
-    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabel2, 1, 2, 1, 1);
+    GtkWidget *settingsLabelMemory = gtk_label_new("Memory");
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabelMemory, 1, 2, 1, 1);
+    settingsInputMemory = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(settingsInputMemory),"2048");
+    gtk_widget_set_hexpand(settingsInputMemory, true);
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsInputMemory, 2, 2, 1, 1);
+    
+    GtkWidget *settingsLabelCores = gtk_label_new("CPU Cores");
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabelCores, 1, 3, 1, 1);
+    settingsInputCores = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(settingsInputCores),"1");
+    gtk_widget_set_hexpand(settingsInputCores, true);
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsInputCores, 2, 3, 1, 1);
+    
+    GtkWidget *settingsLabelGraphicsDriver = gtk_label_new("Virtual Graphics Driver");
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabelGraphicsDriver, 1, 4, 1, 1);
+    settingsInputGraphicsDriver = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(settingsInputGraphicsDriver),"virtio");
+    gtk_widget_set_hexpand(settingsInputGraphicsDriver, true);
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsInputGraphicsDriver, 2, 4, 1, 1);
+    
+    GtkWidget *settingsLabelSoundCard = gtk_label_new("Virtual Sound Card");
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabelSoundCard, 1, 5, 1, 1);
+    settingsInputSoundCard = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(settingsInputSoundCard),"ac97");
+    gtk_widget_set_hexpand(settingsInputSoundCard, true);
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsInputSoundCard, 2, 5, 1, 1);
+    
+    GtkWidget *settingsLabelNetworkCard = gtk_label_new("Virtual Network Card");
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsLabelNetworkCard, 1, 6, 1, 1);
+    settingsInputNetworkCard = gtk_entry_new();
+    gtk_entry_set_text(GTK_ENTRY(settingsInputNetworkCard),"rtl8139");
+    gtk_widget_set_hexpand(settingsInputNetworkCard, true);
+    gtk_grid_attach(GTK_GRID(settingsContainer), settingsInputNetworkCard, 2, 6, 1, 1);
+    
     
     gtk_box_pack_end(GTK_BOX(rightBox),vmActionBar,false,true,0);
     gtk_paned_add2(GTK_PANED(mainPane), rightBox);
@@ -271,6 +417,23 @@ int main(int argc, char** argv) {
     std::cout << "VM to autoboot           :" << bootVmImmediate << "\n\n";
 
     makePath(qemuConfigFolder);
+    
+    std::ifstream t(vmList);
+    std::string options;
+
+    t.seekg(0, std::ios::end);
+    options.reserve(t.tellg());
+    t.seekg(0, std::ios::beg);
+
+    options.assign((std::istreambuf_iterator<char>(t)),
+                    std::istreambuf_iterator<char>());
+    vmOptions = json::parse(options);
+    
+    for (auto& element : vmOptions) {
+        //std::cout << element << '\n';
+        VMObj vmobj(element);
+        vms.push_back(vmobj);
+    }
     
     GtkApplication *app;
     int status;

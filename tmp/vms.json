@@ -1,0 +1,43 @@
+[
+    {
+        "name":"Windows 7",
+        "efi":false,
+        "graphics":{
+            "driver":"virtio"
+        },
+        "memory":2048,
+        "cores":2,
+        "sound":"ac97",
+        "network":"rtl8139",
+        "drives":[
+            {
+                "virtualType":"cdrom",
+                "realType":"raw",
+                "file":"Win7_Pro_SP1_English_x64.iso"
+            },
+            {
+                "virtualType":"disk",
+                "realType":"raw",
+                "file":"win7.img"
+            }
+        ]
+    },
+    {
+        "name":"Windows 7 ISO Only",
+        "efi":false,
+        "graphics":{
+            "driver":"virtio"
+        },
+        "memory":1024,
+        "cores":2,
+        "sound":"ac97",
+        "network":"rtl8139",
+        "drives":[
+            {
+                "virtualType":"cdrom",
+                "realType":"raw",
+                "file":"Win7_Pro_SP1_English_x64.iso"
+            }
+        ]
+    }
+]
